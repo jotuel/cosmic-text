@@ -5,8 +5,8 @@
 use crate::fallback::FontFallbackIter;
 use crate::{
     math, Align, Attrs, AttrsList, CacheKeyFlags, Color, DecorationMetrics, DecorationSpan,
-    Ellipsize, EllipsizeHeightLimit, Family, Font, FontSystem, GlyphDecorationData, Hinting,
-    LayoutGlyph, LayoutLine, Metrics, Wrap,
+    Ellipsize, EllipsizeHeightLimit, Family, Font, FontSystem, GlyphDecorationData, HashSet,
+    Hinting, LayoutGlyph, LayoutLine, Metrics, Wrap,
 };
 #[cfg(not(feature = "std"))]
 use alloc::{format, vec, vec::Vec};
@@ -150,7 +150,7 @@ fn shape_fallback(
     start_run: usize,
     end_run: usize,
     span_rtl: bool,
-) -> Vec<usize> {
+) -> HashSet<usize> {
     let run = &line[start_run..end_run];
 
     let font_scale = font.metrics().units_per_em as f32;
@@ -227,14 +227,14 @@ fn shape_fallback(
     let glyph_infos = glyph_buffer.glyph_infos();
     let glyph_positions = glyph_buffer.glyph_positions();
 
-    let mut missing = Vec::new();
+    let mut missing = HashSet::default();
     glyphs.reserve(glyph_infos.len());
     let glyph_start = glyphs.len();
     for (info, pos) in glyph_infos.iter().zip(glyph_positions.iter()) {
         let start_glyph = start_run + info.cluster as usize;
 
         if info.glyph_id == 0 {
-            missing.push(start_glyph);
+            missing.insert(start_glyph);
         }
 
         let attrs = attrs_list.get_span(start_glyph);
@@ -354,19 +354,18 @@ fn shape_run(
     // are not in `missing` and would otherwise be left monochrome. We track
     // them as upgrade candidates and swap them to a color font when one is
     // reached in the fallback chain. See <https://github.com/pop-os/cosmic-text/issues/327>.
-    let emoji_clusters = emoji_upgrade_clusters(line, start_run, end_run);
-    let mut emoji_upgrade: Vec<usize> = if font.has_color() {
+    let emoji_clusters: HashSet<usize> = emoji_upgrade_clusters(line, start_run, end_run)
+        .into_iter()
+        .collect();
+    let mut emoji_upgrade: HashSet<usize> = if font.has_color() {
         // The default font already renders these in color; nothing to upgrade.
-        Vec::new()
+        HashSet::default()
     } else {
-        emoji_clusters
-            .iter()
-            .filter(|&&c| !missing.contains(&c))
-            .copied()
-            .collect()
+        emoji_clusters.difference(&missing).copied().collect()
     };
 
     //TODO: improve performance!
+    let mut fb_glyphs = Vec::new();
     loop {
         // Continue while there are missing clusters, or emoji clusters that
         // could still be upgraded to a color font. The upgrade search is bound
@@ -396,7 +395,7 @@ fn shape_run(
             "Evaluating fallback with font '{}'",
             font_iter.face_name(font.id())
         );
-        let mut fb_glyphs = Vec::new();
+        fb_glyphs.clear();
         let scratch = font_iter.shape_caches();
         let fb_missing = shape_fallback(
             scratch,
@@ -409,7 +408,10 @@ fn shape_run(
             span_rtl,
         );
 
-        // Insert all matching glyphs
+        // Collect replacements for clusters that are missing or being
+        // upgraded to a color font. Each entry is (start, end, glyphs).
+        let mut replacements: Vec<(usize, usize, Vec<ShapeGlyph>)> = Vec::new();
+
         let mut fb_i = 0;
         while fb_i < fb_glyphs.len() {
             let start = fb_glyphs[fb_i].start;
@@ -430,63 +432,66 @@ fn shape_run(
 
             if was_missing {
                 // No longer missing: remove all missing entries in this cluster.
-                let mut missing_i = 0;
-                while missing_i < missing.len() {
-                    if missing[missing_i] >= start && missing[missing_i] < end {
-                        // println!("No longer missing {}", missing[missing_i]);
-                        missing.remove(missing_i);
-                    } else {
-                        missing_i += 1;
-                    }
-                }
+                missing.retain(|&m| m < start || m >= end);
                 // If a *non-color* fallback just covered a missing emoji
                 // cluster with a monochrome glyph, it becomes an upgrade
                 // candidate so a later color font can take over.
                 if !is_color_font && emoji_clusters.contains(&start) {
-                    emoji_upgrade.push(start);
+                    emoji_upgrade.insert(start);
                 }
             }
             if is_emoji_upgrade {
                 // Upgraded to a color font: no longer pending.
-                let mut up_i = 0;
-                while up_i < emoji_upgrade.len() {
-                    if emoji_upgrade[up_i] >= start && emoji_upgrade[up_i] < end {
-                        emoji_upgrade.remove(up_i);
-                    } else {
-                        up_i += 1;
-                    }
-                }
+                emoji_upgrade.retain(|&u| u < start || u >= end);
             }
 
-            // Find prior glyphs
-            let mut i = glyph_start;
-            while i < glyphs.len() {
-                if glyphs[i].start >= start && glyphs[i].end <= end {
-                    break;
-                }
-                i += 1;
-            }
-
-            // Remove prior glyphs
-            while i < glyphs.len() {
-                if glyphs[i].start >= start && glyphs[i].end <= end {
-                    let _glyph = glyphs.remove(i);
-                    // log::trace!("Removed {},{} from {}", _glyph.start, _glyph.end, i);
-                } else {
-                    break;
-                }
-            }
-
+            // Collect the fallback glyphs for this cluster.
+            let mut cluster_glyphs = Vec::new();
             while fb_i < fb_glyphs.len() {
                 if fb_glyphs[fb_i].start >= start && fb_glyphs[fb_i].end <= end {
-                    let fb_glyph = fb_glyphs.remove(fb_i);
-                    // log::trace!("Insert {},{} from font {} at {}", fb_glyph.start, fb_glyph.end, font_i, i);
-                    glyphs.insert(i, fb_glyph);
-                    i += 1;
+                    cluster_glyphs.push(fb_glyphs[fb_i].clone());
+                    fb_i += 1;
                 } else {
                     break;
                 }
             }
+            replacements.push((start, end, cluster_glyphs));
+        }
+
+        // Apply all replacements in a single linear pass instead of
+        // per-glyph Vec::remove/insert (which shifts the tail each time).
+        if !replacements.is_empty() {
+            if span_rtl {
+                replacements.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+            } else {
+                replacements.sort_unstable_by_key(|r| r.0);
+            }
+            let tail = glyphs.split_off(glyph_start);
+            let mut merged = Vec::with_capacity(tail.len());
+            let mut repl_iter = replacements.into_iter().peekable();
+            for g in tail {
+                // Insert replacements that come before this glyph in array order.
+                if span_rtl {
+                    while repl_iter.peek().is_some_and(|r| r.0 >= g.end) {
+                        merged.extend(repl_iter.next().unwrap().2);
+                    }
+                } else {
+                    while repl_iter.peek().is_some_and(|r| r.1 <= g.start) {
+                        merged.extend(repl_iter.next().unwrap().2);
+                    }
+                }
+                // Skip glyphs that fall within a replacement range.
+                let replaced = repl_iter
+                    .peek()
+                    .is_some_and(|r| g.start >= r.0 && g.end <= r.1);
+                if !replaced {
+                    merged.push(g);
+                }
+            }
+            for (_, _, rglyphs) in repl_iter {
+                merged.extend(rglyphs);
+            }
+            glyphs.extend(merged);
         }
     }
 
