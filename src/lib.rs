@@ -94,6 +94,9 @@ compile_error!("Either the `std` or `no_std` feature must be enabled");
 pub use self::attrs::*;
 mod attrs;
 
+pub use self::emoji::*;
+mod emoji;
+
 pub use self::bidi_para::*;
 mod bidi_para;
 

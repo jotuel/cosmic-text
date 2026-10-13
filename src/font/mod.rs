@@ -58,6 +58,7 @@ pub struct Font {
     id: fontdb::ID,
     monospace_fallback: Option<FontMonospaceFallback>,
     pub(crate) italic_or_oblique: bool,
+    pub(crate) color: bool,
 }
 
 impl fmt::Debug for Font {
@@ -237,6 +238,7 @@ impl Font {
                 },
             )
             .ok()?,
+            color: font_ref.colr().is_ok() || font_ref.cbdt().is_ok(),
             data: FontData::new(Blob::new(data), info.index),
             italic_or_oblique: info.style == Style::Italic || info.style == Style::Oblique,
         })
