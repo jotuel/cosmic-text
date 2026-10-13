@@ -24,17 +24,15 @@ impl Fallback for PlatformFallback {
     ) -> &'static [&'static str] {
         script_fallback(script, locale)
     }
+
+    fn emoji_fallback(&self) -> &'static [&'static str] {
+        &["Apple Color Emoji"]
+    }
 }
 
 // Fallbacks to use after any script specific fallbacks
 fn common_fallback() -> &'static [&'static str] {
-    &[
-        ".SF NS",
-        "Menlo",
-        "Apple Color Emoji",
-        "Geneva",
-        "Arial Unicode MS",
-    ]
+    &[".SF NS", "Menlo", "Geneva", "Arial Unicode MS"]
 }
 
 // Fallbacks to never use

@@ -17,6 +17,10 @@ impl Fallback for PlatformFallback {
         forbidden_fallback()
     }
 
+    fn emoji_fallback(&self) -> &[&'static str] {
+        emoji_fallback()
+    }
+
     fn script_fallback(
         &self,
         script: unicode_script::Script,
@@ -42,8 +46,6 @@ const fn common_fallback() -> &'static [&'static str] {
         /* Symbols fallbacks */
         "Noto Sans Symbols",
         "Noto Sans Symbols2",
-        /* Emoji fallbacks*/
-        "Noto Color Emoji",
         //TODO: Add CJK script here for doublewides?
     ]
 }
@@ -51,6 +53,11 @@ const fn common_fallback() -> &'static [&'static str] {
 // Fallbacks to never use
 const fn forbidden_fallback() -> &'static [&'static str] {
     &[]
+}
+
+// Emoji fallbacks
+const fn emoji_fallback() -> &'static [&'static str] {
+    &["Noto Color Emoji", "OpenMoji"]
 }
 
 fn han_unification(locale: &str) -> &'static [&'static str] {

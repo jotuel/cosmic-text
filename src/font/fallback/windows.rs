@@ -24,6 +24,10 @@ impl Fallback for PlatformFallback {
     ) -> &'static [&'static str] {
         script_fallback(script, locale)
     }
+
+    fn emoji_fallback(&self) -> &'static [&'static str] {
+        &["Segoe UI Emoji"]
+    }
 }
 
 // Fallbacks to use after any script specific fallbacks
@@ -31,7 +35,6 @@ fn common_fallback() -> &'static [&'static str] {
     //TODO: abstract style (sans/serif/monospaced)
     &[
         "Segoe UI",
-        "Segoe UI Emoji",
         "Segoe UI Symbol",
         "Segoe UI Historic",
         //TODO: Add CJK script here for doublewides?

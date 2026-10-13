@@ -5,7 +5,7 @@ use EmojiStatus::{
     EmojiPresentationAndModifierAndEmojiComponent, EmojiPresentationAndModifierBase,
 };
 
-pub fn gather_emojis<'a>(
+pub fn gather_emojis_from_run<'a>(
     line: &'a str,
     start_run: usize,
     end_run: usize,
@@ -13,7 +13,7 @@ pub fn gather_emojis<'a>(
     line[start_run..end_run]
         .grapheme_indices(true)
         .filter_map(move |(offset, grapheme)| {
-            if grapheme_emoji(grapheme) {
+            if grapheme_is_emoji(grapheme) {
                 Some((start_run + offset, grapheme.len()))
             } else {
                 None
@@ -21,7 +21,8 @@ pub fn gather_emojis<'a>(
         })
 }
 
-fn grapheme_emoji(g: &str) -> bool {
+/// https://www.unicode.org/reports/tr51/#EBNF_and_Regex
+fn grapheme_is_emoji(g: &str) -> bool {
     let mut chars = g.chars();
     let Some(first) = chars.next() else {
         return false;

@@ -40,7 +40,6 @@ mod platform;
 ///     fn common_fallback(&self) -> &[&'static str] {
 ///         &[
 ///             "Segoe UI",
-///             "Segoe UI Emoji",
 ///             "Segoe UI Symbol",
 ///             "Segoe UI Historic",
 ///         ]
@@ -48,6 +47,10 @@ mod platform;
 ///
 ///     fn forbidden_fallback(&self) -> &[&'static str] {
 ///         &[]
+///     }
+///
+///     fn emoji_fallback(&self) -> &[&'static str] {
+///         &["Segoe UI Emoji"]
 ///     }
 ///
 ///     fn script_fallback(&self, script: Script, locale: &str) -> &[&'static str] {
@@ -74,6 +77,11 @@ pub trait Fallback: Send + Sync {
 
     /// Fallbacks to use per script
     fn script_fallback(&self, script: Script, locale: &str) -> &[&'static str];
+
+    /// Fallbacks for emojis
+    fn emoji_fallback(&self) -> &[&'static str] {
+        &[]
+    }
 }
 
 #[derive(Debug, Default)]
@@ -81,6 +89,7 @@ pub struct Fallbacks {
     lists: Vec<&'static str>,
     common_fallback_range: Range<usize>,
     forbidden_fallback_range: Range<usize>,
+    emoji_fallback_range: Range<usize>,
     // PERF: Consider using NoHashHasher since Script is just an integer
     script_fallback_ranges: HashMap<Script, Range<usize>>,
     locale: String,
@@ -92,8 +101,11 @@ impl Fallbacks {
 
         let forbidden_fallback = fallbacks.forbidden_fallback();
 
-        let mut lists =
-            Vec::with_capacity(common_fallback.len() + forbidden_fallback.len() + scripts.len());
+        let emoji_fallback = fallbacks.emoji_fallback();
+
+        let mut lists = Vec::with_capacity(
+            common_fallback.len() + forbidden_fallback.len() + emoji_fallback.len() + scripts.len(),
+        );
 
         let mut index = lists.len();
         let mut new_range = |lists: &Vec<&str>| {
@@ -107,6 +119,9 @@ impl Fallbacks {
 
         lists.extend_from_slice(forbidden_fallback);
         let forbidden_fallback_range = new_range(&lists);
+
+        lists.extend_from_slice(emoji_fallback);
+        let emoji_fallback_range = new_range(&lists);
 
         let mut script_fallback_ranges =
             HashMap::with_capacity_and_hasher(scripts.len(), BuildHasher::default());
@@ -122,6 +137,7 @@ impl Fallbacks {
             lists,
             common_fallback_range,
             forbidden_fallback_range,
+            emoji_fallback_range,
             script_fallback_ranges,
             locale,
         }
@@ -160,6 +176,10 @@ impl Fallbacks {
         self.script_fallback_ranges
             .get(&script)
             .map_or(&[], |range| &self.lists[range.clone()])
+    }
+
+    pub(crate) fn emoji_fallback(&self) -> &[&'static str] {
+        &self.lists[self.emoji_fallback_range.clone()]
     }
 }
 
@@ -482,6 +502,29 @@ impl<'a> FontFallbackIter<'a> {
 
         self.end = true;
         None
+    }
+
+    pub fn emoji_fonts(&mut self) -> Vec<Arc<Font>> {
+        let families = self.font_system.fallbacks.emoji_fallback();
+
+        let mut ids = Vec::new();
+        for &family in families {
+            for m_key in self.font_match_keys {
+                if self.face_contains_family(m_key.id, family) {
+                    ids.push(m_key.id);
+                    break;
+                }
+            }
+        }
+
+        let mut fonts = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(font) = self.font_system.get_font(id, self.ideal_weight) {
+                fonts.push(font);
+                break;
+            }
+        }
+        fonts
     }
 }
 

@@ -4,9 +4,9 @@
 
 use crate::fallback::FontFallbackIter;
 use crate::{
-    math, Align, Attrs, AttrsList, CacheKeyFlags, Color, DecorationMetrics, DecorationSpan,
-    Ellipsize, EllipsizeHeightLimit, Family, Font, FontSystem, GlyphDecorationData, Hinting,
-    LayoutGlyph, LayoutLine, Metrics, Wrap,
+    gather_emojis_from_run, math, Align, Attrs, AttrsList, CacheKeyFlags, Color, DecorationMetrics,
+    DecorationSpan, Ellipsize, EllipsizeHeightLimit, Family, Font, FontSystem, GlyphDecorationData,
+    Hinting, LayoutGlyph, LayoutLine, Metrics, Wrap,
 };
 #[cfg(not(feature = "std"))]
 use alloc::{format, vec, vec::Vec};
@@ -346,6 +346,99 @@ fn shape_run(
             scratch, glyphs, &font, line, attrs_list, start_run, end_run, span_rtl,
         )
     };
+
+    let emojis: Vec<usize> = gather_emojis_from_run(line, start_run, end_run)
+        .map(|(offset, _len)| offset)
+        .collect();
+    let upgrades: Vec<usize> = if font.color {
+        Vec::new()
+    } else {
+        emojis
+            .iter()
+            .copied()
+            .filter(|c| !missing.contains(c))
+            .collect()
+    };
+
+    if !upgrades.is_empty() || emojis.iter().any(|c| missing.contains(c)) {
+        for emoji_font in font_iter.emoji_fonts() {
+            if upgrades.is_empty() && !emojis.iter().any(|c| missing.contains(c)) {
+                break;
+            }
+
+            let mut fb_glyphs = Vec::new();
+            let scratch = font_iter.shape_caches();
+            let fb_missing = shape_fallback(
+                scratch,
+                &mut fb_glyphs,
+                &emoji_font,
+                line,
+                attrs_list,
+                start_run,
+                end_run,
+                span_rtl,
+            );
+
+            // TODO: run with a debugger and remove unneeded parts (if any)
+            // Also remember to comment out log traces.
+            let mut fb_i = 0;
+            while fb_i < fb_glyphs.len() {
+                let start = fb_glyphs[fb_i].start;
+                let end = fb_glyphs[fb_i].end;
+
+                // Skip clusters that are not missing, or where the fallback font is missing
+                if !missing.contains(&start) || fb_missing.contains(&start) {
+                    fb_i += 1;
+                    continue;
+                }
+
+                let mut missing_i = 0;
+                while missing_i < missing.len() {
+                    if missing[missing_i] >= start && missing[missing_i] < end {
+                        println!("No longer missing {}", missing[missing_i]);
+                        missing.remove(missing_i);
+                    } else {
+                        missing_i += 1;
+                    }
+                }
+
+                // Find prior glyphs
+                let mut i = glyph_start;
+                while i < glyphs.len() {
+                    if glyphs[i].start >= start && glyphs[i].end <= end {
+                        break;
+                    }
+                    i += 1;
+                }
+
+                // Remove prior glyphs
+                while i < glyphs.len() {
+                    if glyphs[i].start >= start && glyphs[i].end <= end {
+                        let _glyph = glyphs.remove(i);
+                        log::trace!("Removed {},{} from {}", _glyph.start, _glyph.end, i);
+                    } else {
+                        break;
+                    }
+                }
+
+                while fb_i < fb_glyphs.len() {
+                    if fb_glyphs[fb_i].start >= start && fb_glyphs[fb_i].end <= end {
+                        let fb_glyph = fb_glyphs.remove(fb_i);
+                        log::trace!(
+                            "Insert {},{} from font at {}",
+                            fb_glyph.start,
+                            fb_glyph.end,
+                            i
+                        );
+                        glyphs.insert(i, fb_glyph);
+                        i += 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+    }
 
     //TODO: improve performance!
     while !missing.is_empty() {
