@@ -120,6 +120,10 @@ impl Font {
             key: swash.1,
         }
     }
+
+    pub fn has_color(&self) -> bool {
+        self.color
+    }
 }
 
 impl Font {
