@@ -380,7 +380,6 @@ fn shape_run(
             );
 
             // TODO: run with a debugger and remove unneeded parts (if any)
-            // Also remember to comment out log traces.
             let mut fb_i = 0;
             while fb_i < fb_glyphs.len() {
                 let start = fb_glyphs[fb_i].start;
@@ -388,7 +387,7 @@ fn shape_run(
 
                 let is_found = missing.contains(&start);
                 let upgradeable = upgrades.contains(&start);
-                if !fb_missing.contains(&start) || (!is_found && !upgradeable) {
+                if fb_missing.contains(&start) || (!is_found && !upgradeable) {
                     fb_i += 1;
                     continue;
                 }
@@ -414,7 +413,7 @@ fn shape_run(
                 while i < glyphs.len() {
                     if glyphs[i].start >= start && glyphs[i].end <= end {
                         let _glyph = glyphs.remove(i);
-                        log::trace!("Removed {},{} from {}", _glyph.start, _glyph.end, i);
+                        // log::trace!("Removed {},{} from {}", _glyph.start, _glyph.end, i);
                     } else {
                         break;
                     }
@@ -423,12 +422,12 @@ fn shape_run(
                 while fb_i < fb_glyphs.len() {
                     if fb_glyphs[fb_i].start >= start && fb_glyphs[fb_i].end <= end {
                         let fb_glyph = fb_glyphs.remove(fb_i);
-                        log::trace!(
-                            "Insert {},{} from font at {}",
-                            fb_glyph.start,
-                            fb_glyph.end,
-                            i
-                        );
+                        // log::trace!(
+                        //     "Insert {},{} from font at {}",
+                        //     fb_glyph.start,
+                        //     fb_glyph.end,
+                        //     i
+                        // );
                         glyphs.insert(i, fb_glyph);
                         i += 1;
                     } else {
@@ -445,10 +444,10 @@ fn shape_run(
             break;
         };
 
-        log::trace!(
-            "Evaluating fallback with font '{}'",
-            font_iter.face_name(font.id())
-        );
+        // log::trace!(
+        //     "Evaluating fallback with font '{}'",
+        //     font_iter.face_name(font.id())
+        // );
         let mut fb_glyphs = Vec::new();
         let scratch = font_iter.shape_caches();
         let fb_missing = shape_fallback(
