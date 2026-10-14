@@ -57,7 +57,7 @@ const fn forbidden_fallback() -> &'static [&'static str] {
 
 // Emoji fallbacks
 const fn emoji_fallback() -> &'static [&'static str] {
-    &["Noto Color Emoji", "OpenMoji"]
+    &["Noto Color Emoji", "OpenMoji Color"]
 }
 
 fn han_unification(locale: &str) -> &'static [&'static str] {
