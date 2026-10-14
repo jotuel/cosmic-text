@@ -521,7 +521,6 @@ impl<'a> FontFallbackIter<'a> {
         for id in ids {
             if let Some(font) = self.font_system.get_font(id, self.ideal_weight) {
                 fonts.push(font);
-                break;
             }
         }
         fonts
