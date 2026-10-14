@@ -350,7 +350,7 @@ fn shape_run(
     let emojis: Vec<usize> = gather_emojis_from_run(line, start_run, end_run)
         .map(|(offset, _len)| offset)
         .collect();
-    let upgrades: Vec<usize> = if font.color {
+    let mut upgrades: Vec<usize> = if font.color {
         Vec::new()
     } else {
         emojis
@@ -386,20 +386,19 @@ fn shape_run(
                 let start = fb_glyphs[fb_i].start;
                 let end = fb_glyphs[fb_i].end;
 
-                // Skip clusters that are not missing, or where the fallback font is missing
-                if !missing.contains(&start) || fb_missing.contains(&start) {
+                let is_found = missing.contains(&start);
+                let upgradeable = upgrades.contains(&start);
+                if !fb_missing.contains(&start) || (!is_found && !upgradeable) {
                     fb_i += 1;
                     continue;
                 }
 
-                let mut missing_i = 0;
-                while missing_i < missing.len() {
-                    if missing[missing_i] >= start && missing[missing_i] < end {
-                        println!("No longer missing {}", missing[missing_i]);
-                        missing.remove(missing_i);
-                    } else {
-                        missing_i += 1;
-                    }
+                if is_found {
+                    missing.retain(|&m| m < start || m >= end);
+                }
+
+                if upgradeable {
+                    upgrades.retain(|&u| u < start || u >= end);
                 }
 
                 // Find prior glyphs
