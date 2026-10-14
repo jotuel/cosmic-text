@@ -242,7 +242,7 @@ impl Font {
                 },
             )
             .ok()?,
-            color: font_ref.colr().is_ok() || font_ref.cbdt().is_ok(),
+            color: font_ref.colr().is_ok() || font_ref.cbdt().is_ok() || font_ref.sbix().is_ok(),
             data: FontData::new(Blob::new(data), info.index),
             italic_or_oblique: info.style == Style::Italic || info.style == Style::Oblique,
         })
