@@ -4,9 +4,9 @@
 
 use crate::fallback::FontFallbackIter;
 use crate::{
-    gather_emojis_from_run, math, Align, Attrs, AttrsList, CacheKeyFlags, Color, DecorationMetrics,
-    DecorationSpan, Ellipsize, EllipsizeHeightLimit, Family, Font, FontSystem, GlyphDecorationData,
-    Hinting, LayoutGlyph, LayoutLine, Metrics, Wrap,
+    math, Align, Attrs, AttrsList, CacheKeyFlags, Color, DecorationMetrics, DecorationSpan,
+    Ellipsize, EllipsizeHeightLimit, Family, Font, FontSystem, GlyphDecorationData, Hinting,
+    LayoutGlyph, LayoutLine, Metrics, Wrap,
 };
 #[cfg(not(feature = "std"))]
 use alloc::{format, vec, vec::Vec};
@@ -347,9 +347,18 @@ fn shape_run(
         )
     };
 
-    let emojis: Vec<usize> = gather_emojis_from_run(line, start_run, end_run)
+    let emojis: Vec<usize> = line[start_run..end_run]
+        .grapheme_indices(true)
+        .filter_map(move |(offset, grapheme)| {
+            if emojis::get(grapheme).is_some() {
+                Some((start_run + offset, grapheme.len()))
+            } else {
+                None
+            }
+        })
         .map(|(offset, _len)| offset)
         .collect();
+
     let mut upgrades: Vec<usize> = if font.color {
         Vec::new()
     } else {
