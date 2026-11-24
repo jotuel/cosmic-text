@@ -347,34 +347,25 @@ fn shape_run(
         )
     };
 
-    let emojis: Vec<usize> = line[start_run..end_run]
-        .grapheme_indices(true)
-        .filter_map(move |(offset, grapheme)| {
-            if emojis::get(grapheme).is_some() {
-                Some((start_run + offset, grapheme.len()))
-            } else {
-                None
+    let run = &line[start_run..end_run];
+    let mut upgrades = Vec::new();
+    let mut missing_emojis = Vec::new();
+
+    if (!font.color || !missing.is_empty()) && !run.is_ascii() {
+        for (offset, grapheme) in run.grapheme_indices(true) {
+            if !grapheme.is_ascii() && emojis::get(grapheme).is_some() {
+                let pos = start_run + offset;
+                if missing.contains(&pos) {
+                    missing_emojis.push(pos);
+                } else if !font.color {
+                    upgrades.push(pos);
+                }
             }
-        })
-        .map(|(offset, _len)| offset)
-        .collect();
+        }
+    }
 
-    let mut upgrades: Vec<usize> = if font.color {
-        Vec::new()
-    } else {
-        emojis
-            .iter()
-            .copied()
-            .filter(|c| !missing.contains(c))
-            .collect()
-    };
-
-    if !upgrades.is_empty() || emojis.iter().any(|c| missing.contains(c)) {
+    if !upgrades.is_empty() || !missing_emojis.is_empty() {
         for emoji_font in font_iter.emoji_fonts() {
-            if upgrades.is_empty() && !emojis.iter().any(|c| missing.contains(c)) {
-                break;
-            }
-
             let mut fb_glyphs = Vec::new();
             let scratch = font_iter.shape_caches();
             let fb_missing = shape_fallback(
@@ -388,7 +379,6 @@ fn shape_run(
                 span_rtl,
             );
 
-            // TODO: run with a debugger and remove unneeded parts (if any)
             let mut fb_i = 0;
             while fb_i < fb_glyphs.len() {
                 let start = fb_glyphs[fb_i].start;
@@ -403,46 +393,47 @@ fn shape_run(
 
                 if is_found {
                     missing.retain(|&m| m < start || m >= end);
+                    missing_emojis.retain(|&m| m < start || m >= end);
                 }
 
                 if upgradeable {
                     upgrades.retain(|&u| u < start || u >= end);
                 }
 
-                // Find prior glyphs
-                let mut i = glyph_start;
-                while i < glyphs.len() {
-                    if glyphs[i].start >= start && glyphs[i].end <= end {
-                        break;
+                if let Some(block_lo) = glyphs[glyph_start..]
+                    .iter()
+                    .position(|g| g.start >= start && g.end <= end)
+                    .map(|p| glyph_start + p)
+                {
+                    let mut block_hi = block_lo;
+                    while block_hi < glyphs.len()
+                        && glyphs[block_hi].start >= start
+                        && glyphs[block_hi].end <= end
+                    {
+                        block_hi += 1
                     }
-                    i += 1;
-                }
+                    let mut count = 0;
+                    while fb_i + count < fb_glyphs.len()
+                        && fb_glyphs[fb_i + count].start >= start
+                        && fb_glyphs[fb_i + count].end <= end
+                    {
+                        count += 1
+                    }
+                    glyphs.splice(
+                        block_lo..block_hi,
+                        fb_glyphs[fb_i..fb_i + count].iter().cloned(),
+                    );
+                    fb_i += count;
 
-                // Remove prior glyphs
-                while i < glyphs.len() {
-                    if glyphs[i].start >= start && glyphs[i].end <= end {
-                        let _glyph = glyphs.remove(i);
-                        // log::trace!("Removed {},{} from {}", _glyph.start, _glyph.end, i);
-                    } else {
+                    if missing.is_empty() && upgrades.is_empty() {
                         break;
                     }
+                } else {
+                    fb_i += 1;
                 }
-
-                while fb_i < fb_glyphs.len() {
-                    if fb_glyphs[fb_i].start >= start && fb_glyphs[fb_i].end <= end {
-                        let fb_glyph = fb_glyphs.remove(fb_i);
-                        // log::trace!(
-                        //     "Insert {},{} from font at {}",
-                        //     fb_glyph.start,
-                        //     fb_glyph.end,
-                        //     i
-                        // );
-                        glyphs.insert(i, fb_glyph);
-                        i += 1;
-                    } else {
-                        break;
-                    }
-                }
+            }
+            if upgrades.is_empty() && missing_emojis.is_empty() {
+                break;
             }
         }
     }
@@ -472,54 +463,56 @@ fn shape_run(
 
         // Insert all matching glyphs
         let mut fb_i = 0;
+
         while fb_i < fb_glyphs.len() {
             let start = fb_glyphs[fb_i].start;
             let end = fb_glyphs[fb_i].end;
 
-            // Skip clusters that are not missing, or where the fallback font is missing
-            if !missing.contains(&start) || fb_missing.contains(&start) {
+            let is_found = missing.contains(&start);
+            let upgradeable = upgrades.contains(&start);
+            if (!is_found && !upgradeable) || fb_missing.contains(&start) {
                 fb_i += 1;
                 continue;
             }
 
-            let mut missing_i = 0;
-            while missing_i < missing.len() {
-                if missing[missing_i] >= start && missing[missing_i] < end {
-                    // println!("No longer missing {}", missing[missing_i]);
-                    missing.remove(missing_i);
-                } else {
-                    missing_i += 1;
-                }
+            if is_found {
+                missing.retain(|&m| m < start || m >= end);
             }
 
-            // Find prior glyphs
-            let mut i = glyph_start;
-            while i < glyphs.len() {
-                if glyphs[i].start >= start && glyphs[i].end <= end {
-                    break;
-                }
-                i += 1;
+            if upgradeable {
+                upgrades.retain(|&u| u < start || u >= end);
             }
 
-            // Remove prior glyphs
-            while i < glyphs.len() {
-                if glyphs[i].start >= start && glyphs[i].end <= end {
-                    let _glyph = glyphs.remove(i);
-                    // log::trace!("Removed {},{} from {}", _glyph.start, _glyph.end, i);
-                } else {
-                    break;
+            if let Some(block_lo) = glyphs[glyph_start..]
+                .iter()
+                .position(|g| g.start >= start && g.end <= end)
+                .map(|p| glyph_start + p)
+            {
+                let mut block_hi = block_lo;
+                while block_hi < glyphs.len()
+                    && glyphs[block_hi].start >= start
+                    && glyphs[block_hi].end <= end
+                {
+                    block_hi += 1
                 }
-            }
+                let mut count = 0;
+                while fb_i + count < fb_glyphs.len()
+                    && fb_glyphs[fb_i + count].start >= start
+                    && fb_glyphs[fb_i + count].end <= end
+                {
+                    count += 1
+                }
+                glyphs.splice(
+                    block_lo..block_hi,
+                    fb_glyphs[fb_i..fb_i + count].iter().cloned(),
+                );
+                fb_i += count;
 
-            while fb_i < fb_glyphs.len() {
-                if fb_glyphs[fb_i].start >= start && fb_glyphs[fb_i].end <= end {
-                    let fb_glyph = fb_glyphs.remove(fb_i);
-                    // log::trace!("Insert {},{} from font {} at {}", fb_glyph.start, fb_glyph.end, font_i, i);
-                    glyphs.insert(i, fb_glyph);
-                    i += 1;
-                } else {
+                if missing.is_empty() && upgrades.is_empty() {
                     break;
                 }
+            } else {
+                fb_i += 1;
             }
         }
     }
