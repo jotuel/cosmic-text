@@ -379,75 +379,26 @@ fn shape_run(
                 span_rtl,
             );
 
-            let mut fb_i = 0;
-            while fb_i < fb_glyphs.len() {
-                let start = fb_glyphs[fb_i].start;
-                let end = fb_glyphs[fb_i].end;
-
-                let is_found = missing.contains(&start);
-                let upgradeable = upgrades.contains(&start);
-                if fb_missing.contains(&start) || (!is_found && !upgradeable) {
-                    fb_i += 1;
-                    continue;
-                }
-
-                if is_found {
-                    missing.retain(|&m| m < start || m >= end);
-                    missing_emojis.retain(|&m| m < start || m >= end);
-                }
-
-                if upgradeable {
-                    upgrades.retain(|&u| u < start || u >= end);
-                }
-
-                if let Some(block_lo) = glyphs[glyph_start..]
-                    .iter()
-                    .position(|g| g.start >= start && g.end <= end)
-                    .map(|p| glyph_start + p)
-                {
-                    let mut block_hi = block_lo;
-                    while block_hi < glyphs.len()
-                        && glyphs[block_hi].start >= start
-                        && glyphs[block_hi].end <= end
-                    {
-                        block_hi += 1
-                    }
-                    let mut count = 0;
-                    while fb_i + count < fb_glyphs.len()
-                        && fb_glyphs[fb_i + count].start >= start
-                        && fb_glyphs[fb_i + count].end <= end
-                    {
-                        count += 1
-                    }
-                    glyphs.splice(
-                        block_lo..block_hi,
-                        fb_glyphs[fb_i..fb_i + count].iter().cloned(),
-                    );
-                    fb_i += count;
-
-                    if missing.is_empty() && upgrades.is_empty() {
-                        break;
-                    }
-                } else {
-                    fb_i += 1;
-                }
-            }
+            merge_fallback_glyphs(
+                glyphs,
+                glyph_start,
+                &mut missing,
+                &mut upgrades,
+                fb_glyphs,
+                fb_missing,
+                Some(&mut missing_emojis),
+            );
             if upgrades.is_empty() && missing_emojis.is_empty() {
                 break;
             }
         }
     }
 
-    //TODO: improve performance!
     while !missing.is_empty() {
         let Some(font) = font_iter.next() else {
             break;
         };
 
-        // log::trace!(
-        //     "Evaluating fallback with font '{}'",
-        //     font_iter.face_name(font.id())
-        // );
         let mut fb_glyphs = Vec::new();
         let scratch = font_iter.shape_caches();
         let fb_missing = shape_fallback(
@@ -462,72 +413,88 @@ fn shape_run(
         );
 
         // Insert all matching glyphs
-        let mut fb_i = 0;
-
-        while fb_i < fb_glyphs.len() {
-            let start = fb_glyphs[fb_i].start;
-            let end = fb_glyphs[fb_i].end;
-
-            let is_found = missing.contains(&start);
-            let upgradeable = upgrades.contains(&start);
-            if (!is_found && !upgradeable) || fb_missing.contains(&start) {
-                fb_i += 1;
-                continue;
-            }
-
-            if is_found {
-                missing.retain(|&m| m < start || m >= end);
-            }
-
-            if upgradeable {
-                upgrades.retain(|&u| u < start || u >= end);
-            }
-
-            if let Some(block_lo) = glyphs[glyph_start..]
-                .iter()
-                .position(|g| g.start >= start && g.end <= end)
-                .map(|p| glyph_start + p)
-            {
-                let mut block_hi = block_lo;
-                while block_hi < glyphs.len()
-                    && glyphs[block_hi].start >= start
-                    && glyphs[block_hi].end <= end
-                {
-                    block_hi += 1
-                }
-                let mut count = 0;
-                while fb_i + count < fb_glyphs.len()
-                    && fb_glyphs[fb_i + count].start >= start
-                    && fb_glyphs[fb_i + count].end <= end
-                {
-                    count += 1
-                }
-                glyphs.splice(
-                    block_lo..block_hi,
-                    fb_glyphs[fb_i..fb_i + count].iter().cloned(),
-                );
-                fb_i += count;
-
-                if missing.is_empty() && upgrades.is_empty() {
-                    break;
-                }
-            } else {
-                fb_i += 1;
-            }
-        }
+        merge_fallback_glyphs(
+            glyphs,
+            glyph_start,
+            &mut missing,
+            &mut upgrades,
+            fb_glyphs,
+            fb_missing,
+            None,
+        );
     }
 
     // Debug missing font fallbacks
     font_iter.check_missing(&line[start_run..end_run]);
 
-    /*
-    for glyph in glyphs.iter() {
-        log::trace!("'{}': {}, {}, {}, {}", &line[glyph.start..glyph.end], glyph.x_advance, glyph.y_advance, glyph.x_offset, glyph.y_offset);
-    }
-    */
-
     // Restore the scripts buffer.
     font_system.shape_buffer.scripts = scripts;
+}
+
+fn merge_fallback_glyphs(
+    glyphs: &mut Vec<ShapeGlyph>,
+    glyph_start: usize,
+    missing: &mut Vec<usize>,
+    upgrades: &mut Vec<usize>,
+    fb_glyphs: Vec<ShapeGlyph>,
+    fb_missing: Vec<usize>,
+    mut missing_emojis: Option<&mut Vec<usize>>,
+) {
+    let mut fb_i = 0;
+    while fb_i < fb_glyphs.len() {
+        let start = fb_glyphs[fb_i].start;
+        let end = fb_glyphs[fb_i].end;
+
+        let is_found = missing.contains(&start);
+        let upgradeable = upgrades.contains(&start);
+        if fb_missing.contains(&start) || (!is_found && !upgradeable) {
+            fb_i += 1;
+            continue;
+        }
+
+        if is_found {
+            missing.retain(|&m| m < start || m >= end);
+            if let Some(missing_emojis) = missing_emojis.as_deref_mut() {
+                missing_emojis.retain(|&m| m < start || m >= end);
+            }
+        }
+
+        if upgradeable {
+            upgrades.retain(|&u| u < start || u >= end);
+        }
+
+        if let Some(block_lo) = glyphs[glyph_start..]
+            .iter()
+            .position(|g| g.start >= start && g.end <= end)
+            .map(|p| glyph_start + p)
+        {
+            let mut block_hi = block_lo;
+            while block_hi < glyphs.len()
+                && glyphs[block_hi].start >= start
+                && glyphs[block_hi].end <= end
+            {
+                block_hi += 1;
+            }
+            let mut count = 0;
+            while fb_i + count < fb_glyphs.len()
+                && fb_glyphs[fb_i + count].start >= start
+                && fb_glyphs[fb_i + count].end <= end
+            {
+                count += 1;
+            }
+            glyphs.splice(
+                block_lo..block_hi,
+                fb_glyphs[fb_i..fb_i + count].iter().cloned(),
+            );
+            fb_i += count;
+
+            if missing.is_empty() && upgrades.is_empty() {
+                break;
+            }
+        } else {
+            fb_i += 1;
+        }
+    }
 }
 
 #[cfg(feature = "shape-run-cache")]
